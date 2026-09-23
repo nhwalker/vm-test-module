@@ -1,0 +1,26 @@
+#!/bin/bash
+# Ask the guest to power off via ACPI (QMP system_powerdown) and wait for QEMU to exit.
+#   usage: vm-shutdown [timeout-seconds]   (default 30)
+# Always exits 0: the caller is about to kill the container regardless.
+TIMEOUT="${1:-30}"
+QMP_SOCK=/vm/qmp.sock
+
+if [[ ! -S "$QMP_SOCK" ]]; then
+  echo "[vm-shutdown] no QMP socket at $QMP_SOCK; nothing to do" >&2
+  exit 0
+fi
+
+# QMP requires the capabilities handshake before any command. socat keeps the
+# connection open long enough for both responses.
+printf '{"execute":"qmp_capabilities"}\n{"execute":"system_powerdown"}\n' \
+  | timeout 5 socat -t 2 - "UNIX-CONNECT:$QMP_SOCK" >/dev/null 2>&1 || true
+
+for ((i = 0; i < TIMEOUT; i++)); do
+  if ! pgrep -x qemu-system-x86 >/dev/null 2>&1; then
+    echo "[vm-shutdown] guest powered off after ${i}s" >&2
+    exit 0
+  fi
+  sleep 1
+done
+echo "[vm-shutdown] guest still running after ${TIMEOUT}s; container will be killed" >&2
+exit 0

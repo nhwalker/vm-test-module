@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  ROCKY_IMAGE_URL: https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2
+  RUNNER_IMAGE_TAG: vm-testcontainers-qemu:ci
+
+jobs:
+  runner-image:
+    name: Build runner image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: runner-image
+          tags: ${{ env.RUNNER_IMAGE_TAG }}
+          outputs: type=docker,dest=/tmp/runner-image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runner-image
+          path: /tmp/runner-image.tar
+          retention-days: 1
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build and unit test
+        run: ./gradlew build --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-reports
+          path: vm-testcontainers/build/reports/tests
+
+  integration-tests:
+    name: Integration tests (KVM)
+    needs: [runner-image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          test -r /dev/kvm -a -w /dev/kvm
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: runner-image
+          path: /tmp
+      - name: Load runner image
+        run: docker load -i /tmp/runner-image.tar && docker image ls ${{ env.RUNNER_IMAGE_TAG }}
+
+      - name: Fetch Rocky image checksum
+        run: |
+          mkdir -p images
+          curl -fsSL "${ROCKY_IMAGE_URL}.CHECKSUM" -o images/rocky.CHECKSUM
+          cat images/rocky.CHECKSUM
+      - name: Cache Rocky image
+        id: cache-rocky
+        uses: actions/cache@v4
+        with:
+          path: images/rocky.qcow2
+          key: rocky9-genericcloud-${{ hashFiles('images/rocky.CHECKSUM') }}
+      - name: Download Rocky image
+        if: steps.cache-rocky.outputs.cache-hit != 'true'
+        run: curl -fL --retry 3 "${ROCKY_IMAGE_URL}" -o images/rocky.qcow2
+      - name: Verify Rocky image
+        run: |
+          expected=$(awk '/^SHA256/ {print $NF}' images/rocky.CHECKSUM | head -1)
+          actual=$(sha256sum images/rocky.qcow2 | cut -d' ' -f1)
+          echo "expected=$expected actual=$actual"
+          test "$expected" = "$actual"
+
+      - name: Runner image smoke test
+        run: runner-image/smoke-test.sh images/rocky.qcow2 ${{ env.RUNNER_IMAGE_TAG }}
+
+      - name: Integration tests
+        env:
+          VM_TEST_IMAGE: ${{ github.workspace }}/images/rocky.qcow2
+          VM_TEST_RUNNER_IMAGE: ${{ env.RUNNER_IMAGE_TAG }}
+        run: ./gradlew integrationTest --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-reports
+          path: vm-testcontainers/build/reports/tests
