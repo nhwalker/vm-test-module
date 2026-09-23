@@ -1,0 +1,143 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+description = 'Testcontainers module that boots a Rocky 9 / RHEL 9 VM under QEMU/KVM inside a container'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+    withJavadocJar()
+}
+
+ext {
+    testcontainersVersion = '2.0.5'
+    sshjVersion = '0.41.1'
+    junitVersion = '5.13.4'
+    assertjVersion = '3.27.7'
+    slf4jVersion = '2.0.17'
+    logbackVersion = '1.5.18'
+}
+
+dependencies {
+    api "org.testcontainers:testcontainers:${testcontainersVersion}"
+    implementation "com.hierynomus:sshj:${sshjVersion}"
+    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
+
+    // Optional: only needed if you use the @EnabledIfKvmAvailable JUnit 5 condition.
+    compileOnly "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
+
+    testImplementation platform("org.junit:junit-bom:${junitVersion}")
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation "org.assertj:assertj-core:${assertjVersion}"
+    testRuntimeOnly "ch.qos.logback:logback-classic:${logbackVersion}"
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests: need a local Docker daemon, /dev/kvm and a qcow2 image
+// pointed to by VM_TEST_IMAGE. They live in their own source set so `test`
+// stays fast and Docker-free.
+// ---------------------------------------------------------------------------
+sourceSets {
+    integrationTest {
+        java.srcDir 'src/integrationTest/java'
+        resources.srcDir 'src/integrationTest/resources'
+        compileClasspath += sourceSets.main.output + sourceSets.test.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.test.output
+    }
+}
+
+configurations {
+    integrationTestImplementation.extendsFrom testImplementation
+    integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+dependencies {
+    integrationTestImplementation "org.testcontainers:testcontainers-junit-jupiter:${testcontainersVersion}"
+    integrationTestImplementation "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
+}
+
+tasks.register('integrationTest', Test) {
+    description = 'Boots real VMs. Requires Docker, /dev/kvm and VM_TEST_IMAGE=/path/to/image.qcow2'
+    group = 'verification'
+    testClassesDirs = sourceSets.integrationTest.output.classesDirs
+    classpath = sourceSets.integrationTest.runtimeClasspath
+    shouldRunAfter test
+    // Pass through the knobs the tests and VmContainer read.
+    def image = System.getenv('VM_TEST_IMAGE')
+    if (image != null) {
+        systemProperty 'vm.test.image', image
+    }
+    def runner = System.getProperty('vm.testcontainers.runner-image') ?: System.getenv('VM_TEST_RUNNER_IMAGE')
+    if (runner != null) {
+        systemProperty 'vm.testcontainers.runner-image', runner
+    }
+    onlyIf('VM_TEST_IMAGE is set') { image != null }
+    outputs.upToDateWhen { false }
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        showStandardStreams = true
+        exceptionFormat = 'full'
+    }
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+tasks.named('test') {
+    testLogging {
+        events 'skipped', 'failed'
+        exceptionFormat = 'full'
+    }
+}
+
+javadoc {
+    options.addStringOption('Xdoclint:none', '-quiet')
+}
+
+// Bake the version into the jar so VmContainer can pick the matching runner image tag.
+tasks.named('processResources') {
+    def props = [version: project.version.toString()]
+    inputs.properties(props)
+    filesMatching('vm-testcontainers.properties') {
+        expand(props)
+    }
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+            artifactId = 'vm-testcontainers'
+            pom {
+                name = 'vm-testcontainers'
+                description = project.description
+                url = 'https://github.com/nhwalker/vm-test-module'
+                licenses {
+                    license {
+                        name = 'The Unlicense'
+                        url = 'https://unlicense.org/'
+                    }
+                }
+                scm {
+                    url = 'https://github.com/nhwalker/vm-test-module'
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = 'GitHubPackages'
+            url = uri('https://maven.pkg.github.com/nhwalker/vm-test-module')
+            credentials {
+                username = System.getenv('GITHUB_ACTOR')
+                password = System.getenv('GITHUB_TOKEN')
+            }
+        }
+    }
+}

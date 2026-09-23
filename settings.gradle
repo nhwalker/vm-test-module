@@ -1,0 +1,2 @@
+rootProject.name = 'vm-test-module'
+include 'vm-testcontainers'
