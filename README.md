@@ -38,7 +38,7 @@ class NginxOnRockyTest {
 |---|---|
 | Host OS | Linux. The Docker daemon must be **local** (the guest image is bind-mounted, not copied). |
 | Virtualization | `/dev/kvm` readable and writable by your user (`sudo usermod -aG kvm $USER`). Without it, `withSoftwareEmulation(true)` runs QEMU's TCG interpreter: boots take minutes. |
-| Container privileges | `--device /dev/kvm`, `--device /dev/net/tun`, `--cap-add NET_ADMIN`. Never `--privileged`. |
+| Container privileges | `--device /dev/kvm`, `--device /dev/net/tun`, `--cap-add NET_ADMIN`, plus `--sysctl net.ipv4.ip_forward=1` (and `net.ipv4.conf.all.route_localnet=1`). Never `--privileged`. |
 | Java | 21+ for the library (Testcontainers 2.x, sshj 0.41). |
 | Guest image | A qcow2 cloud image with cloud-init: Rocky 9 GenericCloud ([download](https://dl.rockylinux.org/pub/rocky/9/images/x86_64/)) or the RHEL 9 KVM guest image from Red Hat. x86_64 only. |
 

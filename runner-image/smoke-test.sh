@@ -27,6 +27,7 @@ printf 'instance-id: smoke-%s\nlocal-hostname: smoke\n' "$$" > "$WORK/seed/meta-
 
 docker run -d --name "$NAME" \
   --device /dev/kvm --device /dev/net/tun --cap-add NET_ADMIN \
+  --sysctl net.ipv4.ip_forward=1 --sysctl net.ipv4.conf.all.route_localnet=1 \
   -v "$(realpath "$IMAGE_PATH"):/images/base.qcow2:ro" \
   -v "$WORK/seed:/vm/seed:ro" \
   -e VM_SEED_DIR=/vm/seed \

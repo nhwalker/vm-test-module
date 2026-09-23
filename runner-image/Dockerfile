@@ -2,6 +2,7 @@
 #
 # Required at `docker run` time (VmContainer adds these for you):
 #   --device /dev/kvm --device /dev/net/tun --cap-add NET_ADMIN
+#   --sysctl net.ipv4.ip_forward=1 --sysctl net.ipv4.conf.all.route_localnet=1
 #   -v /path/to/guest.qcow2:/images/base.qcow2:ro
 #
 # Contract (environment variables) is documented in vm-run.sh.

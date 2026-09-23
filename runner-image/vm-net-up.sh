@@ -27,7 +27,19 @@ ip tuntap add dev tap0 mode tap 2>/dev/null || {
 ip addr add "$GW_IP/$PREFIX" dev tap0
 ip link set tap0 up
 
-sysctl -q -w net.ipv4.ip_forward=1
+# Docker's default AppArmor profile denies writes under /proc/sys from inside the container, so these
+# are normally set at `docker run` time with --sysctl (VmContainer does this). Try to set them anyway,
+# then verify the effective value.
+ensure_sysctl() {
+  local key="$1" want="$2" have
+  sysctl -q -w "$key=$want" 2>/dev/null || true
+  have="$(sysctl -n "$key" 2>/dev/null || echo '?')"
+  [[ "$have" == "$want" ]]
+}
+ensure_sysctl net.ipv4.ip_forward 1 || {
+  echo "[vm-net] ERROR: net.ipv4.ip_forward is not 1 and cannot be set from inside the container. Start it with --sysctl net.ipv4.ip_forward=1" >&2
+  exit 1
+}
 
 # Outbound NAT for the guest.
 iptables -t nat -A POSTROUTING -s "$SUBNET" ! -o tap0 -j MASQUERADE
@@ -46,7 +58,8 @@ for p in "${PORT_LIST[@]}"; do
   # Also let processes inside this container (docker exec, smoke tests) reach the guest via localhost.
   iptables -t nat -A OUTPUT -o lo -p tcp --dport "$p" -j DNAT --to-destination "$GUEST_IP:$p"
 done
-sysctl -q -w net.ipv4.conf.all.route_localnet=1
+ensure_sysctl net.ipv4.conf.all.route_localnet 1 \
+  || echo "[vm-net] warning: net.ipv4.conf.all.route_localnet is not 1; the guest is not reachable via 127.0.0.1 from inside this container (start with --sysctl net.ipv4.conf.all.route_localnet=1)" >&2
 
 # DHCP (single fixed lease) + DNS forwarding for the guest.
 dnsmasq \

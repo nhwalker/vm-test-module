@@ -9,8 +9,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
@@ -269,6 +271,16 @@ public class VmContainer extends GenericContainer<VmContainer> {
                 caps.add(Capability.NET_ADMIN);
             }
             hc.withCapAdd(caps.toArray(new Capability[0]));
+
+            // /proc/sys is not writable from inside the container (AppArmor), so the routing sysctls
+            // the launcher needs are set here at creation time. Docker permits namespaced net.* keys.
+            Map<String, String> sysctls = new LinkedHashMap<>();
+            if (hc.getSysctls() != null) {
+                sysctls.putAll(hc.getSysctls());
+            }
+            sysctls.putIfAbsent("net.ipv4.ip_forward", "1");
+            sysctls.putIfAbsent("net.ipv4.conf.all.route_localnet", "1");
+            hc.withSysctls(sysctls);
         });
     }
 
