@@ -172,11 +172,24 @@ class VmContainerIT {
         assertThat(console.toUtf8String()).containsPattern("(?i)reboot: Power down|Power down");
     }
 
+    /** GET with a few retries: runcmd starts the guest's web server asynchronously. */
     private static String httpGet(String url) throws Exception {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-        HttpResponse<String> resp = http.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(20)).build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertThat(resp.statusCode()).isEqualTo(200);
-        return resp.body();
+        Exception last = null;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            try {
+                HttpResponse<String> resp = http.send(
+                        HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(20)).build(),
+                        HttpResponse.BodyHandlers.ofString());
+                if (resp.statusCode() == 200) {
+                    return resp.body();
+                }
+                last = new IllegalStateException("HTTP " + resp.statusCode() + " from " + url);
+            } catch (IOException e) {
+                last = e;
+            }
+            Thread.sleep(2000);
+        }
+        throw last;
     }
 }

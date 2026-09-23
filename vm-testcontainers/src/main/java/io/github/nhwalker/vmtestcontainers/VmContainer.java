@@ -82,6 +82,7 @@ public class VmContainer extends GenericContainer<VmContainer> {
     private Duration sshConnectTimeout = Duration.ofSeconds(10);
     private Duration shutdownTimeout = Duration.ofSeconds(30);
 
+    private boolean hostConfigModifierInstalled;
     private volatile VmSsh ssh;
 
     /** Boots {@code image} with the runner image matching this library's version. */
@@ -239,6 +240,10 @@ public class VmContainer extends GenericContainer<VmContainer> {
             throw new IllegalStateException("withUserData() has no effect together with withoutCloudInit()");
         }
 
+        if (hostConfigModifierInstalled) {
+            return; // configure() runs on every start(); the modifier below must be registered once
+        }
+        hostConfigModifierInstalled = true;
         withCreateContainerCmdModifier(cmd -> {
             HostConfig hc = cmd.getHostConfig();
             if (hc == null) {

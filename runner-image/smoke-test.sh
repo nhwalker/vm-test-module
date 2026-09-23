@@ -54,6 +54,16 @@ done
 "${SSH[@]}" 'getent hosts host.docker.internal >/dev/null 2>&1 || true; curl -sSf -m 10 -o /dev/null https://dl.rockylinux.org/ && echo "outbound ok" || echo "outbound FAILED (may be expected offline)"'
 
 echo "requesting ACPI power off..."
-docker exec "$NAME" vm-shutdown 40
-docker logs "$NAME" 2>&1 | grep -E "reboot: Power down|Power down" && echo "graceful power-off observed"
+# When the guest powers off, QEMU (the container's PID 1) exits and Docker kills the exec'd
+# vm-shutdown with it (exit 137). That is the success path, so ignore the exec's exit status
+# and judge by the container's own exit code and console output instead.
+docker exec "$NAME" vm-shutdown 40 || true
+container_exit="$(timeout 60 docker wait "$NAME" 2>/dev/null || echo timeout)"
+echo "container exit code: $container_exit"
+if docker logs "$NAME" 2>&1 | grep -qiE "reboot: Power down"; then
+  echo "graceful power-off observed"
+else
+  echo "no 'reboot: Power down' on the serial console:"; docker logs "$NAME" 2>&1 | tail -30; exit 1
+fi
+[[ "$container_exit" == "0" ]] || { echo "unexpected container exit code $container_exit"; exit 1; }
 echo "SMOKE TEST PASSED"
